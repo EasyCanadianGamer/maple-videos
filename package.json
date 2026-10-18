@@ -1,7 +1,8 @@
 {
   "name": "maple-videos",
   "scripts": {
-    "dev": "bun run --hot src/app.ts"
+    "dev": "bun run --hot src/bun.ts",
+  "start": "bun src/bun.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
