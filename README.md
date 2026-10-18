@@ -34,7 +34,7 @@ ffmpeg -version
 ## Getting Started
 
 ```bash
-git clone <your-repo-url> maple-videos
+git clone https://github.com/EasyCanadianGamer/maple-videos.git
 cd maple-videos
 bun install
 bun src/bun.ts
