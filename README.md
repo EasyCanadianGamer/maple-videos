@@ -124,8 +124,8 @@ maple-videos/
 
 ## Roadmap
 
-- [ ] Video metadata (titles, descriptions)
-- [ ] Status endpoint (`processing` / `ready` / `failed`)
+- [x] Video metadata (titles, descriptions)
+- [x] Status endpoint (`processing` / `ready` / `failed`)
 - [ ] Upload progress bar and transcoding progress
 - [ ] Web UI
 - [ ] Thumbnails
