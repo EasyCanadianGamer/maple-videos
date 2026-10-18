@@ -138,4 +138,4 @@ maple-videos/
 
 ## License
 
-TBD
+   [AGPL-3.0](LICENSE)
