@@ -1,4 +1,4 @@
-# maple-videos 🍁
+# maple-videos 
 
 A lightweight, open source, self-hosted video platform. Upload your videos, and maple-videos transcodes them to HLS and serves them with a built-in player, so you can put videos on your own website without YouTube, Vimeo, or any corporate platform.
 
