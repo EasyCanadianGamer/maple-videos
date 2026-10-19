@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Upload | maple-videos</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <a href="/" class="logo">maple-videos</a>
+    <nav><a href="/upload.html">Upload</a></nav>
+  </header>
+
+  <main>
+    <h1>Upload a video</h1>
+
+    <form id="form">
+      <label>
+        Video
+        <input type="file" id="file" accept="video/*" required>
+      </label>
+
+      <label>
+        Title (optional)
+        <input type="text" id="title" maxlength="100">
+      </label>
+
+      <label>
+        Description (optional)
+        <textarea id="description" rows="4"></textarea>
+      </label>
+
+      <button type="submit" id="go">Upload</button>
+    </form>
+
+    <div class="progress-group">
+      <label>Upload <span id="uploadPct">0%</span></label>
+      <progress id="uploadBar" max="100" value="0"></progress>
+
+      <label>Processing <span id="processPct">0%</span></label>
+      <progress id="processBar" max="100" value="0"></progress>
+    </div>
+
+    <p id="status"></p>
+  </main>
+
+  <script src="/js/upload.js"></script>
+</body>
+</html>

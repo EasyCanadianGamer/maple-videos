@@ -1,5 +1,9 @@
 // src/bun.ts
 import app from './app'
+import { recoverStuckVideos } from './app'
+
+recoverStuckVideos()
+
 
 export default {
   port: 3000,

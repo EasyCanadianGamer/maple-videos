@@ -126,8 +126,8 @@ maple-videos/
 
 - [x] Video metadata (titles, descriptions)
 - [x] Status endpoint (`processing` / `ready` / `failed`)
-- [ ] Upload progress bar and transcoding progress
-- [ ] Web UI
+- [x] Upload progress bar and transcoding progress
+- [x] Web UI
 - [ ] Thumbnails
 - [ ] Multiple quality levels (adaptive bitrate)
 - [ ] Embeddable player for other websites

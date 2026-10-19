@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>maple-videos</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <a href="/" class="logo">maple-videos</a>
+    <nav><a href="/upload.html">Upload</a></nav>
+  </header>
+
+  <main>
+    <h1 id="title">Loading...</h1>
+    <p id="status"></p>
+    <video id="player" controls hidden></video>
+    <p id="meta" class="muted"></p>
+    <p id="description" class="description"></p>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+  <script src="/js/watch.js"></script>
+</body>
+</html>

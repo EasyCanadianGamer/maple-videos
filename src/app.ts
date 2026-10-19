@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import {serveStatic} from 'hono/bun'
+import {serveStatic} from '@hono/bun'
 import { rm, readdir } from 'node:fs/promises'
 
 
@@ -64,9 +64,96 @@ async function listVideos(): Promise<VideoMeta[]> {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt)) // newest first
 }
 
-// ---------- Helpers ----------
- 
-// Titles and descriptions come from users, so escape them before putting them in HTML
+ const progress = new Map<string, number>()
+async function trackProgress(id: string, stream: ReadableStream<Uint8Array>, duration: number | null) {
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  for await (const chunk of stream) {
+    buffer += decoder.decode(chunk, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? '' // keep any half-finished line for the next chunk
+
+    for (const line of lines) {
+      const [key, value] = line.trim().split('=')
+      if (key === 'out_time_us' && duration) {
+        const microseconds = Number(value) // can be "N/A" at the start, which becomes NaN
+        if (Number.isFinite(microseconds)) {
+          const percent = Math.floor((microseconds / (duration * 1_000_000)) * 100)
+          progress.set(id, Math.min(99, Math.max(0, percent))) // 100 only once it's actually done
+        }
+      }
+    }
+  }
+}
+
+function startTranscode(meta: VideoMeta) {
+  const { id } = meta
+  const dir = `videos/${id}`
+  const path = `${dir}/original`
+
+  progress.set(id, 0)
+
+  const ffmpeg = Bun.spawn(
+    [
+      'ffmpeg', '-nostdin', '-loglevel', 'error',
+      '-progress', 'pipe:1', '-nostats',
+      '-i', path,
+      '-c:v', 'libx264', '-c:a', 'aac',
+      '-hls_time', '6', '-hls_playlist_type', 'vod',
+      '-hls_segment_filename', `${dir}/seg_%03d.ts`,
+      `${dir}/index.m3u8`,
+    ],
+    { stdout: 'pipe' }
+  )
+
+  trackProgress(id, ffmpeg.stdout, meta.duration)
+
+  ffmpeg.exited.then(async (code) => {
+    progress.delete(id)
+    const current = await readMeta(id)
+    if (current) {
+      current.status = code === 0 ? 'ready' : 'failed'
+      await writeMeta(current)
+    }
+    console.log(code === 0 ? `${id} ready` : `${id} failed`)
+  })
+}
+
+// Deletes half-written HLS files from an interrupted transcode
+async function clearPartialOutput(dir: string) {
+  const files = await readdir(dir).catch(() => [])
+  await Promise.all(
+    files
+      .filter((f) => f === 'index.m3u8' || f.startsWith('seg_'))
+      .map((f) => rm(`${dir}/${f}`, { force: true }))
+  )
+}
+
+// Restarts any transcodes that were cut off by a server restart
+export async function recoverStuckVideos() {
+  // with bun --hot, the module re-runs on every save, so only do this once per process
+  const g = globalThis as { __mapleRecovered?: boolean }
+  if (g.__mapleRecovered) return
+  g.__mapleRecovered = true
+
+  const stuck = (await listVideos()).filter((v) => v.status === 'Processing')
+
+  for (const meta of stuck) {
+    const dir = `videos/${meta.id}`
+    if (await Bun.file(`${dir}/original`).exists()) {
+      await clearPartialOutput(dir)
+      console.log(`${meta.id} resuming transcode`)
+      startTranscode(meta)
+    } else {
+      meta.status = 'failed'
+      await writeMeta(meta)
+      console.log(`${meta.id} marked failed (original file missing)`)
+    }
+  }
+}
+
+
 function escapeHtml(text: string) {
   return text
     .replace(/&/g, '&amp;')
@@ -85,6 +172,7 @@ function formatDuration(seconds: number | null) {
 }
 
 app.use('/videos/*', serveStatic({ root: './' }))
+app.use('/*', serveStatic({ root: './public' }))
 
 
 app.post('/api/upload', async (c) => {
@@ -147,7 +235,8 @@ app.post('/api/upload', async (c) => {
       info = null
     }
   }
- 
+
+
   const videoStream = info?.streams?.find((s) => s.codec_type === 'video')
   if (!videoStream) {
     await rm(dir, { recursive: true, force: true })
@@ -166,29 +255,11 @@ app.post('/api/upload', async (c) => {
     duration: Number.isFinite(duration) ? duration : null,
     width: videoStream.width ?? null,
     height: videoStream.height ?? null,
-    status: 'processing',
+    status: 'Processing',
     createdAt: new Date().toISOString(),
   }
   await writeMeta(meta)
- 
-  // transcode in the background
-  const ffmpeg = Bun.spawn([
-    'ffmpeg', '-nostdin', '-i', path,
-    '-c:v', 'libx264', '-c:a', 'aac',
-    '-hls_time', '6', '-hls_playlist_type', 'vod',
-    '-hls_segment_filename', `${dir}/seg_%03d.ts`,
-    `${dir}/index.m3u8`,
-  ])
- 
-  ffmpeg.exited.then(async (code) => {
-    const current = await readMeta(id)
-    if (current) {
-      current.status = code === 0 ? 'ready' : 'failed'
-      await writeMeta(current)
-    }
-    console.log(code === 0 ? `${id} ready` : `${id} failed`)
-  })
- 
+  startTranscode(meta)
   return c.json({ id, status: 'processing' })
 })
 
@@ -208,9 +279,93 @@ app.get('/api/videos/:id', async (c) => {
   if (!meta) {
     return c.json({ error: 'Video not found' }, 404)
   }
-  return c.json(meta)
+  return c.json({
+    ...meta,
+    progress: meta.status === 'ready' ? 100 : progress.get(id) ?? 0,
+  }) 
 })
  
+app.get('/upload', (c) => c.html(`
+  <title>Upload</title>
+  <a href="/">Back</a>
+  <h1>Upload a video</h1>
+
+  <p><input type="file" id="file" accept="video/*"></p>
+  <p><input type="text" id="title" placeholder="Title (optional)" maxlength="100"></p>
+  <p><textarea id="description" placeholder="Description (optional)" rows="4" cols="40"></textarea></p>
+  <p><button id="go">Upload</button></p>
+
+  <p>Upload: <progress id="uploadBar" max="100" value="0"></progress> <span id="uploadPct">0%</span></p>
+  <p>Processing: <progress id="processBar" max="100" value="0"></progress> <span id="processPct">0%</span></p>
+  <p id="status"></p>
+
+  <script>
+    const $ = (id) => document.getElementById(id)
+
+    function setBar(bar, label, pct) {
+      $(bar).value = pct
+      $(label).textContent = Math.round(pct) + '%'
+    }
+
+    $('go').onclick = () => {
+      const file = $('file').files[0]
+      if (!file) return ($('status').textContent = 'Pick a video first')
+
+      const form = new FormData()
+      form.append('file', file)
+      form.append('title', $('title').value)
+      form.append('description', $('description').value)
+
+      $('go').disabled = true
+      $('status').textContent = 'Uploading...'
+
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', '/api/upload')
+
+      // 1. upload progress
+      xhr.upload.onprogress = (e) => {
+        if (!e.lengthComputable) return
+        const pct = (e.loaded / e.total) * 100
+        setBar('uploadBar', 'uploadPct', pct)
+        if (pct >= 100) $('status').textContent = 'Verifying video...'
+      }
+
+      xhr.onload = () => {
+        if (xhr.status !== 200) {
+          $('status').textContent = xhr.responseText
+          $('go').disabled = false
+          return
+        }
+        const { id } = JSON.parse(xhr.responseText)
+        $('status').textContent = 'Processing...'
+        poll(id)
+      }
+
+      xhr.onerror = () => {
+        $('status').textContent = 'Upload failed. Check your connection.'
+        $('go').disabled = false
+      }
+
+      xhr.send(form)
+    }
+
+    // 2. transcoding progress
+    async function poll(id) {
+      const res = await fetch('/api/videos/' + id)
+      const video = await res.json()
+
+      if (video.status === 'ready') {
+        setBar('processBar', 'processPct', 100)
+        location.href = '/watch/' + id
+      } else if (video.status === 'failed') {
+        $('status').textContent = 'Processing failed.'
+      } else {
+        setBar('processBar', 'processPct', video.progress ?? 0)
+        setTimeout(() => poll(id), 1000)
+      }
+    }
+  </script>
+`))
 
 app.get('/', async (c) => {
   const ready = (await listVideos()).filter((v) => v.status === 'ready')
@@ -227,57 +382,12 @@ app.get('/', async (c) => {
  
   return c.html(`
     <h1>maple-videos</h1>
+    <p><a href="/upload">Upload a video</a></p>
     ${ready.length ? `<ul>${items}</ul>` : '<p>No videos yet.</p>'}
   `)
 })
  
-app.get('/watch/:id', async (c) => {
-  const id = c.req.param('id')
- 
-  // only allow real UUIDs, so nobody can inject weird stuff into the page
-  if (!UUID_RE.test(id)) {
-    return c.text('Invalid video ID', 400)
-  }
- 
-  const meta = await readMeta(id)
-  if (!meta) {
-    return c.text('Video not found', 404)
-  }
- 
-  const title = escapeHtml(meta.title)
- 
-  if (meta.status === 'processing') {
-    return c.html(`
-      <h1>${title}</h1>
-      <p>This video is still processing. Refresh in a moment.</p>
-    `)
-  }
- 
-  if (meta.status === 'failed') {
-    return c.html(`
-      <h1>${title}</h1>
-      <p>Something went wrong while processing this video.</p>
-    `)
-  }
- 
-  return c.html(`
-    <title>${title}</title>
-    <a href="/">Back</a>
-    <h1>${title}</h1>
-    <video id="v" controls width="640"></video>
-    <p style="white-space: pre-wrap">${escapeHtml(meta.description)}</p>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
-    <script>
-      const v = document.getElementById('v')
-      const src = '/videos/${id}/index.m3u8'
-      if (Hls.isSupported()) {
-        const hls = new Hls(); hls.loadSource(src); hls.attachMedia(v)
-      } else {
-        v.src = src // Safari plays HLS natively
-      }
-    </script>
-  `)
-})
+app.get('/watch/:id', serveStatic({ path: './public/watch.html' }))
 
 
 
