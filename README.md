@@ -1,4 +1,4 @@
-# maple-videos 🍁
+# maple-videos 
 
 A lightweight, open source, self-hosted video platform. Upload your videos, and maple-videos transcodes them to HLS and serves them with a built-in player, so you can put videos on your own website without YouTube, Vimeo, or any corporate platform.
 
@@ -110,6 +110,15 @@ MP4, MOV (QuickTime), WebM, and MKV (Matroska).
 
 ```
 maple-videos/
+├── public/
+│   ├── index.html   # /home
+│   ├── upload.html  # /upload
+│   └── watch.html   # /watch
+│   └── style.css    # style sheet
+│   └── js/
+│     ├── index.js   
+│     └── upload.ts 
+│     └── watch.ts 
 ├── src/
 │   ├── app.ts      # Routes and app logic
 │   ├── bun.ts      # Bun entry point
@@ -124,10 +133,10 @@ maple-videos/
 
 ## Roadmap
 
-- [ ] Video metadata (titles, descriptions)
-- [ ] Status endpoint (`processing` / `ready` / `failed`)
-- [ ] Upload progress bar and transcoding progress
-- [ ] Web UI
+- [x] Video metadata (titles, descriptions)
+- [x] Status endpoint (`processing` / `ready` / `failed`)
+- [x] Upload progress bar and transcoding progress
+- [x] Web UI
 - [ ] Thumbnails
 - [ ] Multiple quality levels (adaptive bitrate)
 - [ ] Embeddable player for other websites
@@ -138,4 +147,4 @@ maple-videos/
 
 ## License
 
-TBD
+   [AGPL-3.0](LICENSE)

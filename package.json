@@ -1,9 +1,12 @@
 {
   "name": "maple-videos",
+  "license": "AGPL-3.0-or-later",
   "scripts": {
-    "dev": "bun run --hot src/app.ts"
+    "dev": "bun run --hot src/bun.ts",
+    "start": "bun src/bun.ts"
   },
   "dependencies": {
+    "@hono/bun": "^1.0.1",
     "@hono/node-server": "^2.1.5",
     "hono": "^4.13.13"
   },
