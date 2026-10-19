@@ -110,6 +110,15 @@ MP4, MOV (QuickTime), WebM, and MKV (Matroska).
 
 ```
 maple-videos/
+├── public/
+│   ├── index.html   # /home
+│   ├── upload.html  # /upload
+│   └── watch.html   # /watch
+│   └── style.css    # style sheet
+│   └── js/
+│     ├── index.js   
+│     └── upload.ts 
+│     └── watch.ts 
 ├── src/
 │   ├── app.ts      # Routes and app logic
 │   ├── bun.ts      # Bun entry point
