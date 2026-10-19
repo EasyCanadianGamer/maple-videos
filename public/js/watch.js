@@ -11,21 +11,22 @@ function formatDuration(seconds) {
   return h > 0 ? `${h}:${m.toString().padStart(2, '0')}:${s}` : `${m}:${s}`
 }
 
-function play() {
+function play(video) {
   const player = $('player')
-  const src = '/videos/' + id + '/index.m3u8'
+  // older uploads only have index.m3u8, newer ones have master.m3u8
+  const file = video.qualities ? 'master.m3u8' : 'index.m3u8'
+  const src = '/videos/' + id + '/' + file
 
   if (window.Hls && Hls.isSupported()) {
     const hls = new Hls()
     hls.loadSource(src)
     hls.attachMedia(player)
   } else {
-    player.src = src // Safari plays HLS natively
+    player.src = src // Safari handles adaptive HLS natively
   }
 
   player.hidden = false
 }
-
 async function load() {
   const res = await fetch('/api/videos/' + id)
 
@@ -46,7 +47,8 @@ async function load() {
 
   if (video.status === 'ready') {
     $('status').textContent = ''
-    play()
+    if (video.thumbnail) $('player').poster = video.thumbnail
+    play(video)
   } else if (video.status === 'failed') {
     $('status').textContent = 'Something went wrong while processing this video.'
   } else {

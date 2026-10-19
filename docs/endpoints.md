@@ -17,9 +17,13 @@ Tip: pipe JSON responses through [`jq`](https://jqlang.github.io/jq/) for readab
 | `GET` | `/api/videos` | API | List all videos with metadata |
 | `GET` | `/api/videos/:id` | API | Get one video's metadata and status |
 | `GET` | `/` | Page | Homepage listing finished videos |
+| `GET` | `/upload` | Page | Upload form |
 | `GET` | `/watch/:id` | Page | Player page for one video |
-| `GET` | `/videos/:id/index.m3u8` | Static | HLS playlist for a video |
-| `GET` | `/videos/:id/seg_XXX.ts` | Static | HLS video segments |
+| `GET` | `/videos/:id/master.m3u8` | Static | HLS master playlist (multi-quality videos) |
+| `GET` | `/videos/:id/index.m3u8` | Static | HLS playlist (older, single-quality videos only) |
+| `GET` | `/videos/:id/<height>p/index.m3u8` | Static | Per-quality HLS playlist, e.g. `720p/index.m3u8` |
+| `GET` | `/videos/:id/<height>p/seg_XXX.ts` | Static | HLS video segments for one quality |
+| `GET` | `/videos/:id/thumbnail.jpg` | Static | Thumbnail image for a video |
 
 ---
 
@@ -70,6 +74,8 @@ curl -F "file=@$HOME/Downloads/test.mp4;type=video/mp4" \
      -F "description=Testing maple-videos" \
      http://localhost:3000/api/upload
 ```
+
+Behind the scenes, `ffprobe` picks the video's resolution, which determines the quality ladder used for transcoding (`pickRenditions`): videos are transcoded down to every rung at or below their own height, from 1080p, 720p, 480p, down to 360p (tiny videos still get at least 360p). A thumbnail is also grabbed around 10% into the video (capped at 30s).
 
 **Success response (`200`):**
 
@@ -125,10 +131,13 @@ curl http://localhost:3000/api/videos
     "originalName": "test.mp4",
     "size": 48213504,
     "duration": 12.4,
+    "thumbnail": "/videos/1c2f3542-271a-4901-b463-21e7c16fac05/thumbnail.jpg",
     "width": 1920,
     "height": 1080,
     "status": "ready",
-    "createdAt": "2026-10-18T17:20:00.000Z"
+    "createdAt": "2026-10-18T17:20:00.000Z",
+    "hasAudio": true,
+    "qualities": ["1080p", "720p", "480p", "360p"]
   }
 ]
 ```
@@ -137,13 +146,13 @@ curl http://localhost:3000/api/videos
 
 ## `GET /api/videos/:id`
 
-Returns one video's metadata. Also works as the status check while a video is transcoding.
+Returns one video's metadata plus a live `progress` field. Also works as the status check while a video is transcoding.
 
 **Status values:**
 
 | Status | Meaning |
 | --- | --- |
-| `processing` | Uploaded and transcoding |
+| `Processing` | Uploaded and transcoding |
 | `ready` | Transcoding finished, video can be played |
 | `failed` | Transcoding failed |
 
@@ -153,7 +162,7 @@ Returns one video's metadata. Also works as the status check while a video is tr
 curl http://localhost:3000/api/videos/<id>
 ```
 
-**Response:** same shape as one item from `GET /api/videos`.
+**Response:** same shape as one item from `GET /api/videos`, plus a `progress` field (0-100, estimated from `ffmpeg`'s progress output; always `100` once `status` is `ready`). `progress` is tracked in memory only, so it resets to `0` if the server restarts mid-transcode — the final `status` in `meta.json` is unaffected.
 
 **Error responses:**
 
@@ -184,39 +193,58 @@ curl http://localhost:3000/
 
 ---
 
-## `GET /watch/:id`
+## `GET /upload`
 
-HTML player page for one video, showing the title, player, and description.
+Serves the upload form page (`public/upload.html`), always `200` regardless of path params. See [public.md](public.md) for what the page does.
 
-- If the video is still transcoding, it shows a "still processing" message
-- If transcoding failed, it shows an error message
-
-**Test:** open `http://localhost:3000/watch/<id>` in a browser.
-
-**Error responses:**
-
-| Status | Meaning |
-| --- | --- |
-| `400` | ID is not a valid UUID |
-| `404` | No video with that ID |
+**Test:** open `http://localhost:3000/upload` in a browser.
 
 ---
 
-## `GET /videos/:id/index.m3u8` and segments
+## `GET /watch/:id`
 
-Static HLS files served straight from the `videos/` folder. The playlist points to the `seg_XXX.ts` segment files.
+Always serves the player page (`public/watch.html`) with `200`, for any `:id` — the page itself does the real work client-side by calling `GET /api/videos/:id` and rendering based on the result:
 
-**Test (check the playlist):**
+- Invalid ID or video not found: shows "Video not found" / "Invalid video"
+- Still transcoding: shows a "Processing... N%" message and polls every 2s
+- Failed: shows an error message
+- Ready: plays the video (via `master.m3u8`, falling back to `index.m3u8` for older single-quality uploads) and sets the poster to the thumbnail, if any
+
+**Test:** open `http://localhost:3000/watch/<id>` in a browser.
+
+---
+
+## `GET /videos/:id/master.m3u8` and segments
+
+Static HLS files served straight from the `videos/` folder. Each video directory contains:
+
+```
+videos/<id>/
+  original          # the uploaded file
+  meta.json
+  thumbnail.jpg
+  master.m3u8        # master playlist, references each quality folder
+  1080p/index.m3u8
+  1080p/seg_000.ts, seg_001.ts, ...
+  720p/index.m3u8
+  720p/seg_000.ts, ...
+  480p/...
+  360p/...
+```
+
+(Only the qualities at or below the source video's own resolution are generated — see `qualities` in the metadata. Videos transcoded by older versions of the app may instead have a single `index.m3u8` + `seg_XXX.ts` directly in the video's directory, with no `master.m3u8`.)
+
+**Test (check the master playlist):**
 
 ```bash
-curl http://localhost:3000/videos/<id>/index.m3u8
+curl http://localhost:3000/videos/<id>/master.m3u8
 ```
 
 **Test (play it in an external player):**
 
 ```bash
-mpv http://localhost:3000/videos/<id>/index.m3u8
-vlc http://localhost:3000/videos/<id>/index.m3u8
+mpv http://localhost:3000/videos/<id>/master.m3u8
+vlc http://localhost:3000/videos/<id>/master.m3u8
 ```
 
 Browsers other than Safari will download the `.m3u8` file instead of playing it. Use `/watch/:id` to play it in the browser.
