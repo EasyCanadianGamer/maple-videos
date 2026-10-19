@@ -26,17 +26,30 @@ async function load() {
     for (const video of ready) {
       const li = document.createElement('li')
 
+      // thumbnail
+      const img = document.createElement('img')
+      img.className = 'thumb'
+      img.alt = ''
+      img.loading = 'lazy'
+      if (video.thumbnail) img.src = video.thumbnail
+
+      // title
+      const title = document.createElement('span')
+      title.textContent = video.title // textContent keeps user input from running as HTML
+
+      // thumbnail + title together form the clickable link
       const link = document.createElement('a')
       link.href = '/watch/' + video.id
-      link.textContent = video.title // textContent keeps user input from running as HTML
+      link.append(img, title)
 
+      // duration
       const duration = document.createElement('span')
       duration.className = 'muted'
       duration.textContent = formatDuration(video.duration)
 
       li.append(link, duration)
       list.append(li)
-    }
+    }     
   } catch {
     status.textContent = 'Could not load videos.'
   }

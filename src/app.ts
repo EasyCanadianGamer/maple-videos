@@ -14,6 +14,13 @@ const UUID_RE = /^[0-9a-f-]{36}$/
 // meta data
 type Status = 'Processing' | 'ready' | 'failed'
 
+// Quality ladder: [height, video bitrate in kbps]
+const LADDER: [number, number][] = [
+  [1080, 5000],
+  [720, 2800],
+  [480, 1400],
+  [360, 800],
+]
 
 //size in bytes
 //createdAt is the ISO date
@@ -25,10 +32,13 @@ type VideoMeta = {
   originalName:string
   size:number
   duration: number | null
+  thumbnail: string | null
   width: number | null
   height: number | null
   status: Status
   createdAt: string 
+  hasAudio: boolean
+  qualities: string[]
 }
 
 type ProbeResult = {
@@ -37,6 +47,34 @@ type ProbeResult = {
 }
 
 const metaPath = (id: string) => `videos/${id}/meta.json`
+
+
+// helpers
+
+
+function pickRenditions(width: number | null, height: number | null) {
+  const shortSide = Math.min(width ?? 0, height ?? 0) || 360
+  const picked = LADDER.filter(([h]) => h <= shortSide)
+  return picked.length ? picked : [LADDER[LADDER.length - 1]] // tiny videos still get 360p
+}   
+//thumbnails
+// Grabs a frame 10% into the video, which skips black intro frames
+async function generateThumbnail(dir: string, duration: number | null): Promise<boolean> {
+  const seek = duration ? Math.min(duration * 0.1, 30) : 0
+
+  const proc = Bun.spawn([
+    'ffmpeg', '-nostdin', '-loglevel', 'error',
+    '-ss', seek.toFixed(2),
+    '-i', `${dir}/original`,
+    '-frames:v', '1',
+    '-vf', 'scale=640:-2',
+    '-q:v', '3',
+    '-y', // overwrite if it already exists
+    `${dir}/thumbnail.jpg`,
+  ])
+
+  return (await proc.exited) === 0
+}
 
 async function readMeta(id: string): Promise<VideoMeta | null> {
   const file = Bun.file(metaPath(id))
@@ -87,26 +125,61 @@ async function trackProgress(id: string, stream: ReadableStream<Uint8Array>, dur
   }
 }
 
+// Builds the ffmpeg command for multi-quality HLS
+function buildFfmpegArgs(meta: VideoMeta) {
+  const dir = `videos/${meta.id}`
+  const renditions = pickRenditions(meta.width, meta.height)
+  const portrait = (meta.height ?? 0) > (meta.width ?? 0)
+  const n = renditions.length
+
+  // split the video into n copies and scale each one
+  const scales = renditions
+    .map(([h], i) => `[v${i}]scale=${portrait ? `${h}:-2` : `-2:${h}`}[o${i}]`)
+    .join(';')
+  const filter = `[0:v]split=${n}${renditions.map((_, i) => `[v${i}]`).join('')};${scales}`
+
+  const args = ['ffmpeg', '-nostdin', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats',
+    '-i', `${dir}/original`, '-filter_complex', filter]
+
+  // map each scaled video (plus audio if there is any)
+  renditions.forEach((_, i) => {
+    args.push('-map', `[o${i}]`)
+    if (meta.hasAudio) args.push('-map', '0:a:0')
+  })
+
+  // video settings, with keyframes every 6s so every quality switches cleanly on segment boundaries
+  args.push('-c:v', 'libx264', '-preset', 'veryfast',
+    '-force_key_frames', 'expr:gte(t,n_forced*6)', '-sc_threshold', '0')
+
+  renditions.forEach(([, kbps], i) => {
+    args.push(`-b:v:${i}`, `${kbps}k`,
+      `-maxrate:v:${i}`, `${Math.round(kbps * 1.07)}k`,
+      `-bufsize:v:${i}`, `${Math.round(kbps * 1.5)}k`)
+  })
+
+  if (meta.hasAudio) args.push('-c:a', 'aac', '-b:a', '128k', '-ac', '2')
+
+  // tells ffmpeg which video and audio belong to which quality folder
+  const streamMap = renditions
+    .map(([h], i) => (meta.hasAudio ? `v:${i},a:${i},name:${h}p` : `v:${i},name:${h}p`))
+    .join(' ')
+
+  args.push('-f', 'hls', '-hls_time', '6', '-hls_playlist_type', 'vod',
+    '-hls_flags', 'independent_segments',
+    '-master_pl_name', 'master.m3u8',
+    '-var_stream_map', streamMap,
+    '-hls_segment_filename', `${dir}/%v/seg_%03d.ts`,
+    `${dir}/%v/index.m3u8`)
+
+  return args
+}
+
+// Runs the transcode in the background and updates status when it finishes
 function startTranscode(meta: VideoMeta) {
   const { id } = meta
-  const dir = `videos/${id}`
-  const path = `${dir}/original`
-
   progress.set(id, 0)
 
-  const ffmpeg = Bun.spawn(
-    [
-      'ffmpeg', '-nostdin', '-loglevel', 'error',
-      '-progress', 'pipe:1', '-nostats',
-      '-i', path,
-      '-c:v', 'libx264', '-c:a', 'aac',
-      '-hls_time', '6', '-hls_playlist_type', 'vod',
-      '-hls_segment_filename', `${dir}/seg_%03d.ts`,
-      `${dir}/index.m3u8`,
-    ],
-    { stdout: 'pipe' }
-  )
-
+  const ffmpeg = Bun.spawn(buildFfmpegArgs(meta), { stdout: 'pipe' })
   trackProgress(id, ffmpeg.stdout, meta.duration)
 
   ffmpeg.exited.then(async (code) => {
@@ -122,11 +195,14 @@ function startTranscode(meta: VideoMeta) {
 
 // Deletes half-written HLS files from an interrupted transcode
 async function clearPartialOutput(dir: string) {
-  const files = await readdir(dir).catch(() => [])
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
   await Promise.all(
-    files
-      .filter((f) => f === 'index.m3u8' || f.startsWith('seg_'))
-      .map((f) => rm(`${dir}/${f}`, { force: true }))
+    entries
+      .filter((e) =>
+        (e.isDirectory() && /^\d+p$/.test(e.name)) || // quality folders
+        e.name === 'master.m3u8' || e.name === 'index.m3u8' || e.name.startsWith('seg_')
+      )
+      .map((e) => rm(`${dir}/${e.name}`, { recursive: true, force: true }))
   )
 }
 
@@ -242,9 +318,11 @@ app.post('/api/upload', async (c) => {
     await rm(dir, { recursive: true, force: true })
     return c.text('File is not a valid video', 400)
   }
+  const hasAudio = info?.streams?.some((s) => s.codec_type === 'audio') ?? false
  
   const duration = Number(info?.format?.duration)
- 
+  const safeDuration = Number.isFinite(duration) ? duration : null
+  const hasThumb = await generateThumbnail(dir, safeDuration)
   // write metadata
   const meta: VideoMeta = {
     id,
@@ -253,10 +331,13 @@ app.post('/api/upload', async (c) => {
     originalName: file.name,
     size: file.size,
     duration: Number.isFinite(duration) ? duration : null,
+    thumbnail: hasThumb ? `/videos/${id}/thumbnail.jpg` : null,
     width: videoStream.width ?? null,
     height: videoStream.height ?? null,
     status: 'Processing',
     createdAt: new Date().toISOString(),
+    hasAudio,
+    qualities: pickRenditions(videoStream.width ?? null, videoStream.height ?? null).map(([h]) => `${h}p`),
   }
   await writeMeta(meta)
   startTranscode(meta)

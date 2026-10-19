@@ -4,6 +4,12 @@ A lightweight, open source, self-hosted video platform. Upload your videos, and 
 
 > **Status:** Early development. The core upload, transcode, and playback pipeline works. Expect breaking changes.
 
+
+## Showcase
+
+[![maple-videos demo](assets/thumb.jpg)](assets/maple-videos_showcase.mp4)
+
+
 ## Features
 
 - **Uploads** with size limits and format checks
@@ -137,8 +143,8 @@ maple-videos/
 - [x] Status endpoint (`processing` / `ready` / `failed`)
 - [x] Upload progress bar and transcoding progress
 - [x] Web UI
-- [ ] Thumbnails
-- [ ] Multiple quality levels (adaptive bitrate)
+- [x] Thumbnails
+- [x] Multiple quality levels (adaptive bitrate)
 - [ ] Embeddable player for other websites
 - [ ] CLI with admin access and terminal playback through mpv and VLC
 - [ ] Streaming and resumable uploads for large files
