@@ -7,7 +7,9 @@ A lightweight, open source, self-hosted video platform. Upload your videos, and 
 
 ## Showcase
 
-[![maple-videos demo](assets/thumb.jpg)](assets/maple-videos_showcase.mp4)
+https://github.com/user-attachments/assets/cd86f118-c457-4c5a-b5b5-399ab3e3dec9
+
+
 
 
 ## Features
